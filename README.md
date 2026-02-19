@@ -1,5 +1,5 @@
 # SearXNG Engine: Proxmox VE Community Scripts
- 
+  
 A [SearXNG](https://github.com/searxng/searxng) engine that searches the [Proxmox VE Community Scripts](https://community-scripts.github.io/ProxmoxVE/) catalogue of ~480 install scripts for LXC containers, VMs, and add-ons.
 
 ![SearXNG search results for "media" using the !pve bang shortcut, showing matches across script names and descriptions](static/screenshot.png)
