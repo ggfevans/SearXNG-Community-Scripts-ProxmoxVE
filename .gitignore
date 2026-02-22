@@ -1,2 +1,3 @@
 .worktree/**
 .claude/**
+searx/engines/.hmac_secret
