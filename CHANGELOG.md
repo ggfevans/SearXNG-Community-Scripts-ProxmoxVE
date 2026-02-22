@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Aligned `disabled` default guidance across engine docstring, `README.md`, and `settings-snippet.yml` with clear distinction between upstream (opt-in) and personal deployment use cases.
 - Switched networking from `urllib.request` to shared `searx.network.get` (httpx-style).
 - Hardened payload validation (top-level list requirement, strict type checking for categories and scripts).
 - Improved slug normalization using a new `_slugify` helper (NFKD normalization, lowercase, special character removal).

@@ -43,8 +43,10 @@ Add this block under `engines:` in your SearXNG settings file (typically `/etc/s
     engine: community_scripts_proxmoxve
     shortcut: pve
     categories: [it]
-    disabled: false
+    disabled: false   # the engine ships disabled by default; set to false to enable on your instance
 ```
+
+> **Note:** The engine defaults to `disabled: true` (opt-in) for upstream safety. The snippet above uses `disabled: false` because you are installing it on your own instance and want it active immediately. See `settings-snippet.yml` for an upstream-ready example.
 
 ### 3. Restart SearXNG
 

@@ -13,13 +13,17 @@ the user's query never leaves the SearXNG instance.
 Configuration
 =============
 
+The engine defaults to ``disabled = True`` so it must be explicitly enabled.
+For a personal instance set ``disabled: false``; for an upstream contribution
+keep the default so that users opt in.
+
 .. code:: yaml
 
    - name: proxmox ve community scripts
      engine: community_scripts_proxmoxve
      shortcut: pve
      categories: [it]
-     disabled: false
+     disabled: true       # set to false on your own instance
 
 Implementations
 ===============
