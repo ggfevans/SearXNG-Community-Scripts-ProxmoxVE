@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import pathlib
 import sys
 import types
@@ -20,6 +19,16 @@ class DummyLogger:
         if args:
             message = message % args
         self.messages.append(("warning", message))
+
+    def info(self, message: str, *args: object) -> None:
+        if args:
+            message = message % args
+        self.messages.append(("info", message))
+
+    def error(self, message: str, *args: object) -> None:
+        if args:
+            message = message % args
+        self.messages.append(("error", message))
 
     def debug(self, message: str, *args: object) -> None:
         if args:
@@ -79,11 +88,17 @@ def load_engine_module() -> tuple[types.ModuleType, DummyLogger]:
     network_module = types.ModuleType("searx.network")
     network_module.get = lambda url, timeout: FakeHTTPResponse([])
 
+    # Add dummy httpx module
+    httpx_module = types.ModuleType("httpx")
+    httpx_module.HTTPError = Exception # Dummy class for HTTPError
+    httpx_module.TimeoutException = Exception # Dummy class for TimeoutException
+
     module_overrides = {
         "searx": searx_module,
         "searx.enginelib": enginelib_module,
         "searx.result_types": result_types_module,
         "searx.network": network_module,
+        "httpx": httpx_module, # Add httpx here
     }
     original_modules = {key: sys.modules.get(key) for key in module_overrides}
     original_test_module = sys.modules.get(module_name)
@@ -111,7 +126,7 @@ def load_engine_module() -> tuple[types.ModuleType, DummyLogger]:
     return module, logger
 
 
-class CommunityScriptsNetworkTests(unittest.TestCase):
+class CommunityScriptsTestBase(unittest.TestCase):
     def setUp(self) -> None:
         self.module, self.logger = load_engine_module()
 
@@ -121,6 +136,9 @@ class CommunityScriptsNetworkTests(unittest.TestCase):
             "get",
             return_value=FakeHTTPResponse(payload, status_code=status_code),
         )
+
+
+class CommunityScriptsNetworkTests(CommunityScriptsTestBase):
 
     def test_fetch_scripts_success(self) -> None:
         payload = [{"scripts": [{"name": "Test Script", "slug": "test-script"}]}]
@@ -146,16 +164,7 @@ class CommunityScriptsNetworkTests(unittest.TestCase):
         )
 
 
-class CommunityScriptsSchemaHardeningTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.module, self.logger = load_engine_module()
-
-    def _patch_network_get(self, payload: object, status_code: int = 200) -> mock._patch:
-        return mock.patch.object(
-            self.module,
-            "get",
-            return_value=FakeHTTPResponse(payload, status_code=status_code),
-        )
+class CommunityScriptsSchemaHardeningTests(CommunityScriptsTestBase):
 
     def test_fetch_scripts_rejects_non_list_payload(self) -> None:
         with self._patch_network_get({"scripts": []}):
@@ -184,7 +193,6 @@ class CommunityScriptsSchemaHardeningTests(unittest.TestCase):
                     "name": "Valid Script",
                     "slug": "valid-script",
                     "description": "",
-                    "type": "",
                 }
             ],
         )
@@ -205,7 +213,6 @@ class CommunityScriptsSchemaHardeningTests(unittest.TestCase):
                     "name": "Valid Script",
                     "slug": "valid-script",
                     "description": "",
-                    "type": "",
                 }
             ],
         )
@@ -247,7 +254,6 @@ class CommunityScriptsSchemaHardeningTests(unittest.TestCase):
                     "name": "Valid Script",
                     "slug": "valid-script",
                     "description": "",
-                    "type": "",
                 }
             ],
         )
@@ -279,13 +285,11 @@ class CommunityScriptsSchemaHardeningTests(unittest.TestCase):
                     "name": "Whitespace Name",
                     "slug": "whitespace-slug",
                     "description": "",
-                    "type": "",
                 },
                 {
                     "name": "Dup",
                     "slug": "dup",
                     "description": "",
-                    "type": "",
                 },
             ],
         )

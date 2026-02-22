@@ -26,11 +26,24 @@ Implementations
 
 """
 
+import pickle
+
 import typing as t
 
+import zlib
+
+
+
+from httpx import HTTPError, TimeoutException
+
+
+
 from searx import logger
+
 from searx.enginelib import EngineCache
+
 from searx.network import get
+
 from searx.result_types import EngineResults
 
 if t.TYPE_CHECKING:
@@ -54,6 +67,7 @@ about = {
 _SCRIPT_URL = "https://community-scripts.github.io/ProxmoxVE/scripts?id={slug}"
 _CACHE_TTL = 43200  # 12 hours in seconds
 _MAX_RESULTS = 20
+_MAX_CACHE_VALUE_LEN = 10240  # 10 KB
 
 _logger = logger.getChild("community_scripts_proxmoxve")
 
@@ -69,7 +83,7 @@ def _fetch_scripts() -> list[dict[str, t.Any]]:
             _logger.warning("Unexpected community scripts API status: %s", resp.status_code)
             return []
         data = resp.json()
-    except Exception as e:
+    except (ValueError, HTTPError, TimeoutException) as e:
         _logger.warning("Failed to fetch community scripts: %s", e)
         return []
 
@@ -121,15 +135,15 @@ def _fetch_scripts() -> list[dict[str, t.Any]]:
                 continue
 
             description = script.get("description")
-            script_type = script.get("type")
+            # Truncate description to 500 characters
+            description = description[:500] if isinstance(description, str) else ""
 
             seen.add(slug)
             scripts.append(
                 {
                     "name": name,
                     "slug": slug,
-                    "description": description if isinstance(description, str) else "",
-                    "type": script_type if isinstance(script_type, str) else "",
+                    "description": description,
                 }
             )
 
@@ -152,10 +166,35 @@ def init(engine_settings: dict[str, t.Any]) -> bool:  # pylint: disable=unused-a
     For more details see :py:obj:`searx.enginelib.Engine.init`.
     """
     scripts = _fetch_scripts()
-    if scripts:
-        CACHE.set("scripts", scripts, expire=_CACHE_TTL)
-    else:
+    if not scripts:
         _logger.warning("No scripts fetched during init")
+        return True
+
+    try:
+        slugs = []
+        for script in scripts:
+            slug = script.get("slug")
+            if not slug:
+                _logger.warning("Skipping script with no slug in init: %s", script.get('name', 'unknown'))
+                continue
+            
+            slugs.append(slug)
+            serialized_script = pickle.dumps(script)
+            compressed_script = zlib.compress(serialized_script, level=zlib.Z_BEST_COMPRESSION)
+
+            if len(compressed_script) > _MAX_CACHE_VALUE_LEN:
+                _logger.warning("Individual script is too large for cache, even when compressed: %s (size: %d bytes)", slug, len(compressed_script))
+                continue
+
+            CACHE.set(f"script_{slug}", compressed_script, expire=_CACHE_TTL)
+
+        # Store the list of all slugs
+        CACHE.set("script_slugs_list", slugs, expire=_CACHE_TTL)
+        _logger.debug("Cached %d scripts individually.", len(slugs))
+
+    except (pickle.PickleError, zlib.error) as e:
+        _logger.warning("Failed to serialize, compress and cache scripts: %s", e)
+        return False
     return True
 
 
@@ -192,13 +231,67 @@ def search(query: str, params: "RequestParams") -> EngineResults:  # pylint: dis
     if not query or not query.strip():
         return res
 
-    scripts = CACHE.get("scripts")
-    if not isinstance(scripts, list):
+    scripts = []
+    # Retrieve the list of all script slugs
+    slugs_list = CACHE.get("script_slugs_list")
+    
+    if isinstance(slugs_list, list) and slugs_list:
+        _logger.debug("Attempting to retrieve %d scripts from individual cache entries.", len(slugs_list))
+        temp_scripts = []
+        retrieval_successful = True
+        for slug in slugs_list:
+            cached_script = CACHE.get(f"script_{slug}")
+            if cached_script:
+                try:
+                    decompressed_script = zlib.decompress(cached_script)
+                    script = pickle.loads(decompressed_script)
+                    temp_scripts.append(script)
+                except (zlib.error, pickle.UnpicklingError) as e:
+                    _logger.warning("Failed to decompress or unpickle script with slug %s: %s", slug, e)
+                    retrieval_successful = False
+                    break
+            else:
+                _logger.warning("Missing script with slug %s from cache.", slug)
+                retrieval_successful = False
+                break
+        
+        if retrieval_successful:
+            scripts = temp_scripts
+            _logger.debug("Successfully retrieved %d scripts from individual cache entries.", len(scripts))
+        else:
+            _logger.warning("Failed to retrieve all scripts. Re-fetching fresh data.")
+            scripts = [] # Clear any partial retrieval
+
+    if not scripts: # If scripts still empty after all cache attempts
         scripts = _fetch_scripts()
         if scripts:
-            CACHE.set("scripts", scripts, expire=_CACHE_TTL)
-        else:
-            return res
+            # Re-attempt individual script caching from search
+            try:
+                new_slugs = []
+                for script in scripts:
+                    slug = script.get("slug")
+                    if not slug:
+                        _logger.warning("Skipping script with no slug in search cache: %s", script.get('name', 'unknown'))
+                        continue
+                    
+                    new_slugs.append(slug)
+                    serialized_script = pickle.dumps(script)
+                    compressed_script = zlib.compress(serialized_script, level=zlib.Z_BEST_COMPRESSION)
+
+                    if len(compressed_script) > _MAX_CACHE_VALUE_LEN:
+                        _logger.warning("Individual script is too large for cache from search, even when compressed: %s (size: %d bytes)", slug, len(compressed_script))
+                        continue
+
+                    CACHE.set(f"script_{slug}", compressed_script, expire=_CACHE_TTL)
+                
+                CACHE.set("script_slugs_list", new_slugs, expire=_CACHE_TTL)
+                _logger.debug("Cached %d scripts individually from search.", len(new_slugs))
+
+            except (pickle.PickleError, zlib.error) as e:
+                _logger.warning("Failed to serialize, compress and cache scripts from search: %s", e)
+    
+    if not scripts: # Final check if scripts is empty
+        return res
 
     words = query.lower().split()
     scored = [(s, script) for script in scripts if (s := _score_script(script, words)) > 0]
