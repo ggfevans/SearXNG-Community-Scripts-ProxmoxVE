@@ -31,3 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced `pickle` with `json` for cache serialization to eliminate potential deserialization vulnerabilities.
 - Added HMAC-based integrity protection for all cached script data.
 - Configured `.gitignore` to prevent the instance-local `.hmac_secret` from being committed.
+
+## [1.0.1] - 2026-02-19
+
+### Removed
+- Unused `DEPLOY.md` file.
+- `.DS_Store` files from the repository.
+
+### Changed
+- Updated `README.md` with improved documentation.
+
+## [1.0.0] - 2026-02-19
+
+### Added
+- Initial release of the Proxmox VE Community Scripts engine for SearXNG.
+- Offline search support against the community-scripts catalogue.
+- Configuration snippet (`settings-snippet.yml`) for easy integration.
+- Project documentation and screenshots.
+- AGPL-3.0 License.
