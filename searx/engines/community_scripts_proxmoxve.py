@@ -26,9 +26,9 @@ Implementations
 
 """
 
+import http.client
 import json
 import typing as t
-import urllib.request
 
 from searx import logger
 from searx.enginelib import EngineCache
@@ -52,7 +52,6 @@ about = {
     "results": "JSON",
 }
 
-_API_URL = "https://community-scripts.github.io/ProxmoxVE/api/categories"
 _SCRIPT_URL = "https://community-scripts.github.io/ProxmoxVE/scripts?id={slug}"
 _CACHE_TTL = 43200  # 12 hours in seconds
 _MAX_RESULTS = 20
@@ -67,32 +66,74 @@ def _fetch_scripts() -> list[dict[str, t.Any]]:
     """Fetch all scripts from the community-scripts API and return a flat, deduplicated list."""
 
     try:
-        with urllib.request.urlopen(_API_URL, timeout=30) as resp:  # noqa: S310
-            data = json.loads(resp.read().decode())
+        with http.client.HTTPSConnection("community-scripts.github.io", timeout=30) as connection:
+            connection.request("GET", "/ProxmoxVE/api/categories")
+            response = connection.getresponse()
+            if response.status != 200:
+                _logger.warning("Unexpected community scripts API status: %s", response.status)
+                return []
+            data = json.loads(response.read().decode())
     except Exception as e:
         _logger.warning("Failed to fetch community scripts: %s", e)
+        return []
+
+    if not isinstance(data, list):
+        _logger.warning("Unexpected categories payload type: %s", type(data).__name__)
         return []
 
     seen: set[str] = set()
     scripts: list[dict[str, t.Any]] = []
 
-    for category in data:
-        for script in category.get("scripts", []):
+    for category_index, category in enumerate(data):
+        if not isinstance(category, dict):
+            _logger.warning("Skipping malformed category at index %d", category_index)
+            continue
+
+        category_scripts = category.get("scripts", [])
+        if not isinstance(category_scripts, list):
+            _logger.warning("Skipping malformed scripts list in category index %d", category_index)
+            continue
+
+        for script_index, script in enumerate(category_scripts):
+            if not isinstance(script, dict):
+                _logger.warning(
+                    "Skipping malformed script at category %d index %d",
+                    category_index,
+                    script_index,
+                )
+                continue
+
             name = script.get("name")
             slug = script.get("slug")
+            if not isinstance(name, str) or not isinstance(slug, str):
+                _logger.warning(
+                    "Skipping script with invalid name/slug at category %d index %d: name=%r slug=%r",
+                    category_index,
+                    script_index,
+                    name,
+                    slug,
+                )
+                continue
+
+            name = name.strip()
+            slug = slug.strip()
             if not name or not slug:
                 continue
             if script.get("disable") is True:
                 continue
             if slug in seen:
                 continue
+
+            description = script.get("description")
+            script_type = script.get("type")
+
             seen.add(slug)
             scripts.append(
                 {
                     "name": name,
                     "slug": slug,
-                    "description": script.get("description") or "",
-                    "type": script.get("type", ""),
+                    "description": description if isinstance(description, str) else "",
+                    "type": script_type if isinstance(script_type, str) else "",
                 }
             )
 
