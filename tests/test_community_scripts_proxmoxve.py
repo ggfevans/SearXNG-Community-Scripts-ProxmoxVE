@@ -89,16 +89,21 @@ def load_engine_module() -> tuple[types.ModuleType, DummyLogger]:
     network_module.get = lambda url, timeout: FakeHTTPResponse([])
 
     # Add dummy httpx module
+    class DummyHTTPError(Exception):
+        pass
+    class DummyTimeoutException(DummyHTTPError):
+        pass
+
     httpx_module = types.ModuleType("httpx")
-    httpx_module.HTTPError = Exception # Dummy class for HTTPError
-    httpx_module.TimeoutException = Exception # Dummy class for TimeoutException
+    httpx_module.HTTPError = DummyHTTPError
+    httpx_module.TimeoutException = DummyTimeoutException
 
     module_overrides = {
         "searx": searx_module,
         "searx.enginelib": enginelib_module,
         "searx.result_types": result_types_module,
         "searx.network": network_module,
-        "httpx": httpx_module, # Add httpx here
+        "httpx": httpx_module,
     }
     original_modules = {key: sys.modules.get(key) for key in module_overrides}
     original_test_module = sys.modules.get(module_name)
@@ -156,7 +161,7 @@ class CommunityScriptsNetworkTests(CommunityScriptsTestBase):
         )
 
     def test_fetch_scripts_exception(self) -> None:
-        with mock.patch.object(self.module, "get", side_effect=Exception("Network Error")):
+        with mock.patch.object(self.module, "get", side_effect=self.module.HTTPError("Network Error")):
             scripts = self.module._fetch_scripts()
         self.assertEqual(scripts, [])
         self.assertTrue(

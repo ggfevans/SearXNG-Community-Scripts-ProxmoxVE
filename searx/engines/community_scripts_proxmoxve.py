@@ -26,6 +26,10 @@ Implementations
 
 """
 
+import hashlib
+
+import hmac
+
 import pickle
 
 import typing as t
@@ -68,6 +72,7 @@ _SCRIPT_URL = "https://community-scripts.github.io/ProxmoxVE/scripts?id={slug}"
 _CACHE_TTL = 43200  # 12 hours in seconds
 _MAX_RESULTS = 20
 _MAX_CACHE_VALUE_LEN = 10240  # 10 KB
+_HMAC_SECRET_KEY = b'a-secure-secret-key-for-hmac'
 
 _logger = logger.getChild("community_scripts_proxmoxve")
 
@@ -160,6 +165,57 @@ def setup(engine_settings: dict[str, t.Any]) -> bool:
     return True
 
 
+def _serialize_script(script: dict[str, t.Any]) -> bytes:
+    """Serializes, compresses and signs a script dictionary."""
+    serialized_script = pickle.dumps(script)
+    compressed_script = zlib.compress(serialized_script, level=zlib.Z_BEST_COMPRESSION)
+    
+    # Create HMAC
+    mac = hmac.new(_HMAC_SECRET_KEY, compressed_script, hashlib.sha256).digest()
+    
+    return mac + compressed_script
+
+def _deserialize_script(data: bytes) -> dict[str, t.Any]:
+    """Verifies, decompresses and deserializes a script."""
+    mac_size = hashlib.sha256().digest_size
+    mac = data[:mac_size]
+    compressed_script = data[mac_size:]
+
+    # Verify HMAC
+    expected_mac = hmac.new(_HMAC_SECRET_KEY, compressed_script, hashlib.sha256).digest()
+    if not hmac.compare_digest(mac, expected_mac):
+        raise ValueError("HMAC verification failed")
+
+    # Decompress and deserialize
+    # The data is trusted, as it was serialized by this code and its integrity has been verified.
+    decompressed_script = zlib.decompress(compressed_script)
+    return pickle.loads(decompressed_script)
+
+
+def _cache_scripts(scripts: list[dict[str, t.Any]]) -> None:
+    """Serializes, compresses and caches each script individually."""
+    slugs = []
+    for script in scripts:
+        slug = script.get("slug")
+        if not slug:
+            _logger.warning("Skipping script with no slug: %s", script.get('name', 'unknown'))
+            continue
+        
+        slugs.append(slug)
+        
+        signed_script = _serialize_script(script)
+
+        if len(signed_script) > _MAX_CACHE_VALUE_LEN:
+            _logger.warning("Individual script is too large for cache, even when signed and compressed: %s (size: %d bytes)", slug, len(signed_script))
+            continue
+
+        CACHE.set(f"script_{slug}", signed_script, expire=_CACHE_TTL)
+
+    # Store the list of all slugs
+    CACHE.set("script_slugs_list", slugs, expire=_CACHE_TTL)
+    _logger.debug("Cached %d scripts individually.", len(slugs))
+
+
 def init(engine_settings: dict[str, t.Any]) -> bool:  # pylint: disable=unused-argument
     """Pre-warm the cache by fetching the full script catalogue.
 
@@ -171,27 +227,7 @@ def init(engine_settings: dict[str, t.Any]) -> bool:  # pylint: disable=unused-a
         return True
 
     try:
-        slugs = []
-        for script in scripts:
-            slug = script.get("slug")
-            if not slug:
-                _logger.warning("Skipping script with no slug in init: %s", script.get('name', 'unknown'))
-                continue
-            
-            slugs.append(slug)
-            serialized_script = pickle.dumps(script)
-            compressed_script = zlib.compress(serialized_script, level=zlib.Z_BEST_COMPRESSION)
-
-            if len(compressed_script) > _MAX_CACHE_VALUE_LEN:
-                _logger.warning("Individual script is too large for cache, even when compressed: %s (size: %d bytes)", slug, len(compressed_script))
-                continue
-
-            CACHE.set(f"script_{slug}", compressed_script, expire=_CACHE_TTL)
-
-        # Store the list of all slugs
-        CACHE.set("script_slugs_list", slugs, expire=_CACHE_TTL)
-        _logger.debug("Cached %d scripts individually.", len(slugs))
-
+        _cache_scripts(scripts)
     except (pickle.PickleError, zlib.error) as e:
         _logger.warning("Failed to serialize, compress and cache scripts: %s", e)
         return False
@@ -238,55 +274,35 @@ def search(query: str, params: "RequestParams") -> EngineResults:  # pylint: dis
     if isinstance(slugs_list, list) and slugs_list:
         _logger.debug("Attempting to retrieve %d scripts from individual cache entries.", len(slugs_list))
         temp_scripts = []
-        retrieval_successful = True
+        missed_count = 0
         for slug in slugs_list:
             cached_script = CACHE.get(f"script_{slug}")
             if cached_script:
                 try:
-                    decompressed_script = zlib.decompress(cached_script)
-                    script = pickle.loads(decompressed_script)
+                    script = _deserialize_script(cached_script)
                     temp_scripts.append(script)
-                except (zlib.error, pickle.UnpicklingError) as e:
-                    _logger.warning("Failed to decompress or unpickle script with slug %s: %s", slug, e)
-                    retrieval_successful = False
-                    break
+                except (ValueError, zlib.error, pickle.UnpicklingError) as e:
+                    _logger.warning("Failed to deserialize script with slug %s: %s", slug, e)
+                    missed_count += 1
             else:
                 _logger.warning("Missing script with slug %s from cache.", slug)
-                retrieval_successful = False
-                break
+                missed_count += 1
         
-        if retrieval_successful:
+        if temp_scripts:
             scripts = temp_scripts
-            _logger.debug("Successfully retrieved %d scripts from individual cache entries.", len(scripts))
+            _logger.debug("Successfully retrieved %d of %d scripts from cache.", len(scripts), len(slugs_list))
+            if missed_count > 0:
+                 _logger.warning("Missed %d scripts from cache.", missed_count)
         else:
-            _logger.warning("Failed to retrieve all scripts. Re-fetching fresh data.")
-            scripts = [] # Clear any partial retrieval
+            _logger.warning("Failed to retrieve any scripts from cache. Re-fetching fresh data.")
+            scripts = [] # Ensure scripts is empty before re-fetch
 
     if not scripts: # If scripts still empty after all cache attempts
         scripts = _fetch_scripts()
         if scripts:
             # Re-attempt individual script caching from search
             try:
-                new_slugs = []
-                for script in scripts:
-                    slug = script.get("slug")
-                    if not slug:
-                        _logger.warning("Skipping script with no slug in search cache: %s", script.get('name', 'unknown'))
-                        continue
-                    
-                    new_slugs.append(slug)
-                    serialized_script = pickle.dumps(script)
-                    compressed_script = zlib.compress(serialized_script, level=zlib.Z_BEST_COMPRESSION)
-
-                    if len(compressed_script) > _MAX_CACHE_VALUE_LEN:
-                        _logger.warning("Individual script is too large for cache from search, even when compressed: %s (size: %d bytes)", slug, len(compressed_script))
-                        continue
-
-                    CACHE.set(f"script_{slug}", compressed_script, expire=_CACHE_TTL)
-                
-                CACHE.set("script_slugs_list", new_slugs, expire=_CACHE_TTL)
-                _logger.debug("Cached %d scripts individually from search.", len(new_slugs))
-
+                _cache_scripts(scripts)
             except (pickle.PickleError, zlib.error) as e:
                 _logger.warning("Failed to serialize, compress and cache scripts from search: %s", e)
     
