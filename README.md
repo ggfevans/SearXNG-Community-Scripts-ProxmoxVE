@@ -1,36 +1,35 @@
 # SearXNG Engine: Proxmox VE Community Scripts
-  
-A [SearXNG](https://github.com/searxng/searxng) engine that searches the [Proxmox VE Community Scripts](https://community-scripts.github.io/ProxmoxVE/) catalogue of ~480 install scripts for LXC containers, VMs, and add-ons.
 
-![SearXNG search results for "media" using the !pve bang shortcut, showing matches across script names and descriptions](static/screenshot.png)
+A [SearXNG](https://github.com/searxng/searxng) engine that searches the [Proxmox VE Community Scripts](https://community-scripts.github.io/ProxmoxVE/) catalogue: ~480 install scripts for LXC containers, VMs, and add-ons.
+
+Instead of navigating to the community scripts site, search the catalogue directly from SearXNG — intermixed with broader results or exclusively via the `!pve` bang. Anything that connects to your SearXNG instance (like [Seek: SearXNG for Alfred](https://github.com/ggfevans/searxng-seek-alfred)) gets access to the catalogue automatically.
+
+![SearXNG search results for "reverse proxy" using the !pve bang shortcut, showing matches like OAuth2-Proxy, Nginx Proxy Manager, and Cosmos found through description matching](static/screenshot.png)
+
+## Features
+
+- **Offline search** — queries never leave your instance
+- **No extra dependencies** — built entirely on SearXNG's network stack (`searx.network`) and SQLite cache (`EngineCache`)
+- **Cache resilience** — if the upstream API is unreachable, the engine serves results from the existing cache
+- **AND-logic scoring** — all query words must match; +10 name, +5 description
 
 ## How it works
 
-The engine fetches the full script catalogue from the site's static JSON API, caches it locally for 12 hours, and searches against it offline. Your query never leaves your SearXNG instance.
-
-- **Engine type:** `offline` — no per-query network requests
-- **Data source:** `community-scripts.github.io/ProxmoxVE/api/categories` (static JSON, ~480 scripts)
-- **Scoring:** +10 for name match, +5 for description match per query word; AND logic
-- **Cache:** SQLite-backed via SearXNG's `EngineCache`, 12h TTL
-- **Dependencies:** None beyond SearXNG itself
+On startup, the engine fetches the full script catalogue via `searx.network.get` and caches each script individually through SearXNG's `EngineCache` (SQLite-backed, 12 h TTL). After that, all searches run entirely offline — no per-query network requests.
 
 ## Installation
 
 ### 1. Copy the engine file
 
-Find your SearXNG engines directory:
+Find your SearXNG engines directory, then copy the engine file:
 
 ```bash
-# If installed via community scripts LXC:
-ls /usr/local/searxng/searxng-src/searx/engines/
-
-# Or find it dynamically:
+# Find your SearXNG engines directory:
+ls /usr/local/searxng/searxng-src/searx/engines/   # community scripts LXC
+# Or dynamically:
 python3 -c "import searx; print(searx.__path__[0] + '/engines')"
-```
 
-Copy the engine file:
-
-```bash
+# Then copy the engine file:
 cp searx/engines/community_scripts_proxmoxve.py /path/to/searx/engines/
 ```
 
@@ -56,19 +55,11 @@ systemctl restart searxng
 
 ## Usage
 
-- Search normally under the **IT** tab — results from the community scripts catalogue will appear alongside other engines
-- Use the `!pve` bang shortcut to search the catalogue exclusively (e.g., `!pve docker`)
+Results appear under the **IT** tab alongside other engines. Use the `!pve` bang to search the catalogue exclusively:
 
-## Verification
-
-After installation, try these searches:
-
-| Query | Expected results |
-|-------|-----------------|
-| `!pve docker` | Docker LXC, Dockge, etc. |
-| `!pve reverse proxy` | Nginx Proxy Manager, Traefik, Caddy |
-| `!pve adguard` | AdGuard Home LXC |
-| `!pve xyznonexistent` | Empty results |
+- `!pve docker` — Docker LXC, Dockge, etc.
+- `!pve reverse proxy` — Nginx Proxy Manager, Traefik, Caddy
+- `!pve adguard` — AdGuard Home LXC
 
 ## Licence
 
