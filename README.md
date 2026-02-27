@@ -61,6 +61,10 @@ Results appear under the **IT** tab alongside other engines. Use the `!pve` bang
 - `!pve reverse proxy` — Nginx Proxy Manager, Traefik, Caddy
 - `!pve adguard` — AdGuard Home LXC
 
+## Acknowledgements
+
+This project was developed with [Claude Code](https://claude.ai/claude-code) by Anthropic.
+
 ## Licence
 
 [![AGPL-3.0-or-later](static/agplv3-155x51.png)](LICENSE)
