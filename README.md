@@ -1,5 +1,7 @@
 # SearXNG Engine: Proxmox VE Community Scripts
 
+> **This engine is currently broken.** The upstream project removed their public API without replacement during their migration to `community-scripts.org`. Tracking: [#23](https://github.com/ggfevans/SearXNG-Community-Scripts-ProxmoxVE/issues/23) | Upstream: [community-scripts/ProxmoxVE#13545](https://github.com/community-scripts/ProxmoxVE/issues/13545)
+
 A [SearXNG](https://github.com/searxng/searxng) engine that searches the [Proxmox VE Community Scripts](https://community-scripts.github.io/ProxmoxVE/) catalogue: ~480 install scripts for LXC containers, VMs, and add-ons.
 
 Instead of navigating to the community scripts site, search the catalogue directly from SearXNG — intermixed with broader results or exclusively via the `!pve` bang. Anything that connects to your SearXNG instance (like [Seek: SearXNG for Alfred](https://github.com/ggfevans/searxng-seek-alfred)) gets access to the catalogue automatically.
