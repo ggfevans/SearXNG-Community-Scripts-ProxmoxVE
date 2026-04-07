@@ -11,56 +11,69 @@ class DataAnalysisTest(unittest.TestCase):
     @unittest.skip("This test performs live network calls and is for manual runs only.")
     def test_analyze_script_data(self):
         """
-        This test fetches real data from the Proxmox VE community scripts API
+        This test fetches real data from the PocketBase API
         to analyze its size and content.
         """
-        api_url = "https://community-scripts.github.io/ProxmoxVE/api/categories"
+        from urllib.parse import urlencode
+
+        api_base = "https://db.community-scripts.org/api/collections/script_scripts/records"
+        per_page = 500
         timeout = 30
 
-        print("\n--- Fetching real script data from the API ---")
-        try:
-            resp = httpx.get(api_url, timeout=timeout)
-            resp.raise_for_status()
-            data = resp.json()
-        except httpx.HTTPError as e:
-            self.fail(f"Failed to fetch scripts from the API: {e}")
-        except json.JSONDecodeError as e:
-            self.fail(f"Failed to decode JSON from API response: {e}")
-
-        # This logic is intentionally duplicated from _fetch_scripts to keep this
-        # analysis script self-contained and independent of the engine's internal
-        # dependencies and mocking requirements.
-        if not isinstance(data, list):
-            self.fail("Unexpected categories payload type: not a list")
+        print("\n--- Fetching real script data from PocketBase API ---")
 
         seen: set[str] = set()
         scripts: list[dict[str, t.Any]] = []
+        page_num = 0
 
-        for category in data:
-            if not isinstance(category, dict):
-                continue
-            category_scripts = category.get("scripts", [])
-            if not isinstance(category_scripts, list):
-                continue
-            for script in category_scripts:
-                if not isinstance(script, dict):
+        while True:
+            page_num += 1
+            params = urlencode({
+                "perPage": per_page,
+                "page": page_num,
+                "fields": "name,slug,description",
+                "filter": "(is_deleted=false&&is_disabled=false)",
+            })
+            url = f"{api_base}?{params}"
+
+            try:
+                resp = httpx.get(url, timeout=timeout)
+                resp.raise_for_status()
+                data = resp.json()
+            except httpx.HTTPError as e:
+                self.fail(f"Failed to fetch scripts from the API: {e}")
+            except json.JSONDecodeError as e:
+                self.fail(f"Failed to decode JSON from API response: {e}")
+
+            if not isinstance(data, dict):
+                self.fail(f"Unexpected payload type: {type(data).__name__}")
+
+            items = data.get("items", [])
+            if not isinstance(items, list):
+                self.fail(f"Unexpected items type: {type(items).__name__}")
+
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-                name = script.get("name")
-                slug = script.get("slug")
+                name = item.get("name")
+                slug = item.get("slug")
                 if not isinstance(name, str) or not isinstance(slug, str):
                     continue
                 name = name.strip()
                 slug = slug.strip()
                 if not name or not slug:
                     continue
-                if script.get("disable") is True:
-                    continue
                 if slug in seen:
                     continue
-                description = script.get("description")
+                description = item.get("description")
                 description = description[:500] if isinstance(description, str) else ""
                 seen.add(slug)
                 scripts.append({"name": name, "slug": slug, "description": description})
+
+            total_pages = data.get("totalPages", 1)
+            print(f"  Page {page_num}/{total_pages}: {len(items)} items")
+            if page_num >= total_pages:
+                break
 
         print(f"Fetched {len(scripts)} valid scripts.")
 
