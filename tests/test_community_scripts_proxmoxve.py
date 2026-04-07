@@ -102,7 +102,7 @@ def load_engine_module() -> tuple[types.ModuleType, DummyLogger]:
     result_types_module.EngineResults = DummyEngineResults
 
     network_module = types.ModuleType("searx.network")
-    network_module.get = lambda url, timeout: FakeHTTPResponse(_pocketbase_response([]))
+    network_module.get = lambda _url, _timeout: FakeHTTPResponse(_pocketbase_response([]))
 
     # Add dummy httpx module
     class DummyHTTPError(Exception):

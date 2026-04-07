@@ -24,10 +24,9 @@ class DataAnalysisTest(unittest.TestCase):
 
         seen: set[str] = set()
         scripts: list[dict[str, t.Any]] = []
-        page_num = 0
+        max_pages = 20  # safety cap
 
-        while True:
-            page_num += 1
+        for page_num in range(1, max_pages + 1):
             params = urlencode({
                 "perPage": per_page,
                 "page": page_num,
