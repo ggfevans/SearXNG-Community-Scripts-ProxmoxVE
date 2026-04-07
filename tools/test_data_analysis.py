@@ -30,6 +30,7 @@ class DataAnalysisTest(unittest.TestCase):
             params = urlencode({
                 "perPage": per_page,
                 "page": page_num,
+                "skipTotal": "false",
                 "fields": "name,slug,description",
                 "filter": "(is_deleted=false&&is_disabled=false)",
             })
@@ -70,6 +71,8 @@ class DataAnalysisTest(unittest.TestCase):
                 scripts.append({"name": name, "slug": slug, "description": description})
 
             total_pages = data.get("totalPages", 1)
+            if not isinstance(total_pages, int) or total_pages < 1:
+                self.fail(f"Unexpected totalPages value: {total_pages!r}")
             print(f"  Page {page_num}/{total_pages}: {len(items)} items")
             if page_num >= total_pages:
                 break
