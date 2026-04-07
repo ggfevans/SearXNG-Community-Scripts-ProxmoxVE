@@ -47,7 +47,7 @@ class DataAnalysisTest(unittest.TestCase):
             if not isinstance(data, dict):
                 self.fail(f"Unexpected payload type: {type(data).__name__}")
 
-            items = data.get("items", [])
+            items = data.get("items")
             if not isinstance(items, list):
                 self.fail(f"Unexpected items type: {type(items).__name__}")
 
