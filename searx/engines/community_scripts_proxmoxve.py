@@ -4,9 +4,9 @@
 
 This engine searches the community-maintained catalogue of installation scripts
 for Proxmox VE containers, virtual machines, and add-ons hosted at
-`community-scripts.github.io/ProxmoxVE <https://community-scripts.github.io/ProxmoxVE/>`_.
+`community-scripts.org <https://community-scripts.org/>`_.
 
-The catalogue (~480 scripts) is fetched once from the static JSON API and cached
+The catalogue (~550 scripts) is fetched once from the PocketBase API and cached
 locally for 12 hours.  Searches run entirely offline against the cached data —
 the user's query never leaves the SearXNG instance.
 
@@ -39,6 +39,7 @@ import re
 import secrets
 import typing as t
 import unicodedata
+from urllib.parse import urlencode
 import zlib
 
 from httpx import HTTPError, TimeoutException
@@ -58,15 +59,19 @@ paging = False
 time_range_support = False
 
 about = {
-    "website": "https://community-scripts.github.io/ProxmoxVE/",
+    "website": "https://community-scripts.org/",
     "wikidata_id": None,
-    "official_api_documentation": None,
-    "use_official_api": False,
+    "official_api_documentation": "https://community-scripts.org/docs/api/readme",
+    "use_official_api": True,
     "require_api_key": False,
     "results": "JSON",
 }
 
-_SCRIPT_URL = "https://community-scripts.github.io/ProxmoxVE/scripts?id={slug}"
+_API_BASE = "https://db.community-scripts.org/api/collections/script_scripts/records"
+_API_PER_PAGE = 500
+_MAX_PAGES = 10  # safety cap: 10 x 500 = 5000 scripts
+
+_SCRIPT_URL = "https://community-scripts.org/scripts/{slug}"
 _CACHE_TTL = 43200  # 12 hours in seconds
 _MAX_RESULTS = 20
 _MAX_CACHE_VALUE_LEN = 10240  # 10 KB
@@ -89,53 +94,57 @@ def _slugify(value: str, max_len: int = 64) -> str:
 
 
 def _fetch_scripts() -> list[dict[str, t.Any]]:
-    """Fetch all scripts from the community-scripts API and return a flat, deduplicated list."""
-    try:
-        resp = get("https://community-scripts.github.io/ProxmoxVE/api/categories", timeout=30)
-        if resp.status_code != 200:
-            _logger.warning("Unexpected community scripts API status: %s", resp.status_code)
-            return []
-        data = resp.json()
-    except (ValueError, HTTPError, TimeoutException) as e:
-        _logger.warning("Failed to fetch community scripts: %s", e)
-        return []
-
-    if not isinstance(data, list):
-        _logger.warning("Unexpected categories payload type: %s", type(data).__name__)
-        return []
-
+    """Fetch all scripts from the PocketBase API and return a flat, deduplicated list."""
     seen: set[str] = set()
     scripts: list[dict[str, t.Any]] = []
-    for category in data:
-        if not isinstance(category, dict):
-            _logger.warning("Skipping malformed category")
-            continue
-        category_scripts = category.get("scripts", [])
-        if not isinstance(category_scripts, list):
-            _logger.warning("Skipping malformed scripts list in category")
-            continue
-        for script in category_scripts:
-            if not isinstance(script, dict):
-                _logger.warning("Skipping malformed script")
+
+    for page_num in range(1, _MAX_PAGES + 1):
+        params = urlencode({
+            "perPage": _API_PER_PAGE,
+            "page": page_num,
+            "fields": "name,slug,description",
+            "filter": "(is_deleted=false&&is_disabled=false)",
+        })
+        url = f"{_API_BASE}?{params}"
+
+        try:
+            resp = get(url, timeout=30)
+            if resp.status_code != 200:
+                _logger.warning("Unexpected PocketBase API status: %s", resp.status_code)
+                return []
+            data = resp.json()
+        except (ValueError, HTTPError, TimeoutException) as e:
+            _logger.warning("Failed to fetch community scripts: %s", e)
+            return []
+
+        if not isinstance(data, dict):
+            _logger.warning("Unexpected payload type: %s", type(data).__name__)
+            return []
+
+        items = data.get("items")
+        if not isinstance(items, list):
+            _logger.warning("Unexpected items type: %s", type(items).__name__)
+            return []
+
+        for item in items:
+            if not isinstance(item, dict):
+                _logger.warning("Skipping malformed item")
                 continue
-            name = script.get("name")
-            slug = script.get("slug")
+            name = item.get("name")
+            slug = item.get("slug")
             if not isinstance(name, str) or not isinstance(slug, str):
                 _logger.warning(
-                    "Skipping script with invalid name/slug: name=%r slug=%r",
+                    "Skipping item with invalid name/slug: name=%r slug=%r",
                     name,
                     slug,
                 )
                 continue
 
             slug = _slugify(slug)
-            if not name or not slug:
+            if not name.strip() or not slug:
                 continue
 
-            if script.get("disable") is True:
-                continue
-
-            # Handle collisions only for enabled scripts
+            # Handle collisions
             original_slug = slug
             counter = 1
             while slug in seen:
@@ -144,13 +153,17 @@ def _fetch_scripts() -> list[dict[str, t.Any]]:
 
             seen.add(slug)
 
-            description = script.get("description")
-            # Truncate description to 500 characters
+            description = item.get("description")
             description = description[:500] if isinstance(description, str) else ""
 
             scripts.append(
                 {"name": name.strip(), "slug": slug, "description": description}
             )
+
+        total_pages = data.get("totalPages", 1)
+        if page_num >= total_pages:
+            break
+
     return scripts
 
 
